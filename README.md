@@ -85,3 +85,8 @@ Open **`http://localhost:3000`** in your browser!
 
 ## 📄 License
 Distributed under the MIT License. Built with ❤️ for real-world problem solving.
+
+---
+
+## Demo data note
+Demo mode — your data lives in temporary storage and resets when the server restarts or redeploys. Connect a persistent database (e.g. Supabase Postgres) for production.

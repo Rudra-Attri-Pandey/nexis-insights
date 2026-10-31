@@ -4,3 +4,9 @@ node_modules/
 *.log
 *.db
 .vercel
+
+# deploy hygiene (auto-added)
+.env.local
+data/
+*.sqlite3
+__pycache__/

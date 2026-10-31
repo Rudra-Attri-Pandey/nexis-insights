@@ -4,6 +4,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const resultsContent = document.getElementById('results-panel');
   const statusIndicator = document.querySelector('.status-badge');
 
+  // XSS guard: escape user-supplied / AI-generated strings before innerHTML
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
   // Metrics
   const valPos = document.getElementById('pos-pct');
   const valNeu = document.getElementById('neu-pct');
@@ -321,24 +326,24 @@ document.addEventListener('DOMContentLoaded', () => {
         card.innerHTML = `
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <div style="display: flex; gap: 8px; align-items: center;">
-              <span style="font-weight: 700; color: #fff; font-size: 15px;">Report #${item.id.substring(0,8)}</span>
-              <span style="background: ${badgeBg}; color: ${badgeTextColor}; font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600;">${rec}</span>
-              <span style="background: rgba(151, 187, 62, 0.15); color: var(--palette-lime); font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600;">Price: ${price}</span>
+              <span style="font-weight: 700; color: #fff; font-size: 15px;">Report #${escapeHtml(item.id.substring(0,8))}</span>
+              <span style="background: ${badgeBg}; color: ${badgeTextColor}; font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600;">${escapeHtml(rec)}</span>
+              <span style="background: rgba(151, 187, 62, 0.15); color: var(--palette-lime); font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600;">Price: ${escapeHtml(price)}</span>
             </div>
-            <span style="color: var(--text-muted); font-size: 12px;">📅 ${dateStr}</span>
+            <span style="color: var(--text-muted); font-size: 12px;">📅 ${escapeHtml(dateStr)}</span>
           </div>
-          <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 8px; font-style: italic;">"${item.input_text.substring(0, 140)}..."</p>
+          <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 8px; font-style: italic;">"${escapeHtml(item.input_text.substring(0, 140))}..."</p>
           <div style="display: flex; gap: 16px; font-size: 13px; margin-bottom: 8px;">
-            <span style="color: var(--status-positive); font-weight: 600;">Positive: ${item.positive_pct}%</span>
-            <span style="color: var(--status-neutral); font-weight: 600;">Neutral: ${item.neutral_pct}%</span>
-            <span style="color: var(--status-negative); font-weight: 600;">Negative: ${item.negative_pct}%</span>
+            <span style="color: var(--status-positive); font-weight: 600;">Positive: ${escapeHtml(item.positive_pct)}%</span>
+            <span style="color: var(--status-neutral); font-weight: 600;">Neutral: ${escapeHtml(item.neutral_pct)}%</span>
+            <span style="color: var(--status-negative); font-weight: 600;">Negative: ${escapeHtml(item.negative_pct)}%</span>
           </div>
-          <p style="font-size: 13px; color: #e2e8f0; line-height: 1.4;"><strong>Executive Summary:</strong> ${item.executive_summary}</p>
+          <p style="font-size: 13px; color: #e2e8f0; line-height: 1.4;"><strong>Executive Summary:</strong> ${escapeHtml(item.executive_summary)}</p>
         `;
         historyItemsContainer.appendChild(card);
       });
     } catch(err) {
-      historyItemsContainer.innerHTML = `<div style="color: var(--status-negative); padding: 20px; text-align: center;">Failed to load history: ${err.message}</div>`;
+      historyItemsContainer.innerHTML = `<div style="color: var(--status-negative); padding: 20px; text-align: center;">Failed to load history: ${escapeHtml(err.message)}</div>`;
     }
   }
 
@@ -474,15 +479,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
       listPain.innerHTML = '';
       if(data.pain_points) data.pain_points.forEach(pt => {
-        listPain.innerHTML += `<li>${pt}</li>`;
+        listPain.innerHTML += `<li>${escapeHtml(pt)}</li>`;
       });
 
       listFeatures.innerHTML = '';
       if(data.feature_requests) data.feature_requests.forEach(ft => {
-        listFeatures.innerHTML += `<li>${ft}</li>`;
+        listFeatures.innerHTML += `<li>${escapeHtml(ft)}</li>`;
       });
 
-      if (aiWriteup) aiWriteup.innerHTML = data.executive_summary;
+      if (aiWriteup) aiWriteup.innerHTML = escapeHtml(data.executive_summary);
 
       // Price Intelligence Logic
       const priceIntelCard = document.getElementById('price-intel-card');
@@ -510,8 +515,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.price_intelligence.competitor_prices) {
           data.price_intelligence.competitor_prices.forEach(comp => {
             compList.innerHTML += `<li class="card card-variant-stroke" style="padding: 10px 14px; display: flex; justify-content: space-between; border-radius: var(--radius-sm); background: rgba(0, 37, 102, 0.5); border: 1px solid var(--border-light);">
-              <span style="color: var(--text-muted);">${comp.store}</span>
-              <span style="font-weight: 600; color: #FFFFFF;">${comp.price}</span>
+              <span style="color: var(--text-muted);">${escapeHtml(comp.store)}</span>
+              <span style="font-weight: 600; color: #FFFFFF;">${escapeHtml(comp.price)}</span>
             </li>`;
           });
         }
@@ -836,7 +841,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!qcResultsPanel || !qcBasketItems || !qcCartOptions) return;
     qcResultsPanel.classList.remove('hidden');
 
-    const sym = data.currency_symbol || '₹';
+    const sym = escapeHtml(data.currency_symbol || '₹');
 
     // Render Basket Items
     const items = data.parsed_items || [];
@@ -846,14 +851,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const stockDots = ['blinkit', 'zepto', 'instamart', 'bigbasket'].map(p => {
         const status = item.stock ? (item.stock[p] || 'in_stock') : 'in_stock';
         const label = p.charAt(0).toUpperCase() + p.slice(1);
-        return `<span class="stock-dot ${status}"><span class="platform-label ${p}">${stockEmoji(status)} ${label}</span></span>`;
+        return `<span class="stock-dot ${escapeHtml(status)}"><span class="platform-label ${p}">${stockEmoji(status)} ${label}</span></span>`;
       }).join('');
 
       return `
         <div class="basket-item">
           <div class="basket-item-left">
             <span class="basket-item-idx">${idx + 1}</span>
-            <span class="basket-item-name">${item.name}</span>
+            <span class="basket-item-name">${escapeHtml(item.name)}</span>
             <span class="basket-item-qty">(x${item.qty})</span>
           </div>
           <div class="basket-item-right">${stockDots}</div>
@@ -883,32 +888,32 @@ document.addEventListener('DOMContentLoaded', () => {
       <!-- 👑 CHEAPEST -->
       <div class="cart-option-card cheapest">
         <div class="cart-option-tag">👑 CHEAPEST TOTAL</div>
-        <div class="cart-option-platform">${cheapest.platform || 'Platform'}</div>
+        <div class="cart-option-platform">${escapeHtml(cheapest.platform || 'Platform')}</div>
         <div class="cart-option-total-row">
           <span class="cart-option-total">${sym}${cheapest.total || 0}</span>
           <span class="cart-option-eta">⏱ ${cheapest.eta_mins || 12} mins</span>
         </div>
-        ${cheapest.bank_offer ? `<div class="cart-option-bank-offer">🎁 Saved via ${cheapest.bank_offer}</div>` : ''}
+        ${cheapest.bank_offer ? `<div class="cart-option-bank-offer">🎁 Saved via ${escapeHtml(cheapest.bank_offer)}</div>` : ''}
         ${cheapest.breakdown ? renderFeeDrawer(cheapest.breakdown, sym) : ''}
-        <a href="${platformLinks[cheapestPClass] || 'https://www.instacart.com'}" target="_blank" class="checkout-btn ${cheapestPClass}">CHECKOUT ON ${(cheapest.platform || 'ONLINE STORE').toUpperCase()} ➔</a>
+        <a href="${platformLinks[cheapestPClass] || 'https://www.instacart.com'}" target="_blank" class="checkout-btn ${cheapestPClass}">CHECKOUT ON ${escapeHtml((cheapest.platform || 'ONLINE STORE').toUpperCase())} ➔</a>
       </div>
 
       <!-- ⚡ FASTEST -->
       <div class="cart-option-card fastest">
         <div class="cart-option-tag">⚡ FASTEST DELIVERY</div>
-        <div class="cart-option-platform">${fastest.platform || 'Platform'}</div>
+        <div class="cart-option-platform">${escapeHtml(fastest.platform || 'Platform')}</div>
         <div class="cart-option-total-row">
           <span class="cart-option-total">${sym}${fastest.total || 0}</span>
           <span class="cart-option-eta">⏱ ${fastest.eta_mins || 8} mins</span>
         </div>
         ${fastest.breakdown ? renderFeeDrawer(fastest.breakdown, sym) : ''}
-        <a href="${platformLinks[fastestPClass] || 'https://www.doordash.com'}" target="_blank" class="checkout-btn ${fastestPClass}">CHECKOUT ON ${(fastest.platform || 'QUICK STORE').toUpperCase()} ➔</a>
+        <a href="${platformLinks[fastestPClass] || 'https://www.doordash.com'}" target="_blank" class="checkout-btn ${fastestPClass}">CHECKOUT ON ${escapeHtml((fastest.platform || 'QUICK STORE').toUpperCase())} ➔</a>
       </div>
 
       <!-- 🔀 SPLIT CART -->
       <div class="cart-option-card split">
         <div class="cart-option-tag">🔀 SPLIT CART</div>
-        <div class="cart-option-platform">${split.platforms ? split.platforms.join(' + ') : 'Split'}</div>
+        <div class="cart-option-platform">${split.platforms ? split.platforms.map(p => escapeHtml(p)).join(' + ') : 'Split'}</div>
         <div class="cart-option-total-row">
           <span class="cart-option-total">${sym}${split.total || 0}</span>
           <span class="cart-option-eta">⏱ ~${split.combined_eta_mins || 14} mins</span>
@@ -922,16 +927,16 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="split-segment p2" style="width: ${p2Pct}%"></div>
           </div>
           <div class="split-legend">
-            <div class="split-legend-item"><span class="split-legend-dot" style="background: var(--palette-lime);"></span>${split.platforms ? split.platforms[0] : 'Platform 1'} (${splitP1Items.length} items)</div>
-            <div class="split-legend-item"><span class="split-legend-dot" style="background: var(--palette-coral);"></span>${split.platforms ? split.platforms[1] : 'Platform 2'} (${splitP2Items.length} items)</div>
+            <div class="split-legend-item"><span class="split-legend-dot" style="background: var(--palette-lime);"></span>${split.platforms ? escapeHtml(split.platforms[0]) : 'Platform 1'} (${splitP1Items.length} items)</div>
+            <div class="split-legend-item"><span class="split-legend-dot" style="background: var(--palette-coral);"></span>${split.platforms ? escapeHtml(split.platforms[1]) : 'Platform 2'} (${splitP2Items.length} items)</div>
           </div>
         </div>
 
         <div style="margin-top:8px;">
           ${split.platforms && split.items_split ? Object.entries(split.items_split).map(([platform, itemsList]) => `
             <div style="margin-bottom:8px;">
-              <span style="font-size:12px;font-weight:700;color:var(--palette-lime);">${platform}:</span>
-              <ul class="split-items-list">${(itemsList || []).map(i => `<li>• ${i}</li>`).join('')}</ul>
+              <span style="font-size:12px;font-weight:700;color:var(--palette-lime);">${escapeHtml(platform)}:</span>
+              <ul class="split-items-list">${(itemsList || []).map(i => `<li>• ${escapeHtml(i)}</li>`).join('')}</ul>
             </div>
           `).join('') : ''}
         </div>
@@ -1014,12 +1019,12 @@ document.addEventListener('DOMContentLoaded', () => {
           ragCitationsGrid.innerHTML = data.citations.map(c => `
             <div class="citation-card">
               <div class="citation-header">
-                <span class="citation-id">📌 ${c.citation_id} (${c.source_tag || 'Batch'})</span>
+                <span class="citation-id">📌 ${escapeHtml(c.citation_id)} (${escapeHtml(c.source_tag || 'Batch')})</span>
                 <span class="citation-match-badge">${c.similarity_pct}% Vector Match</span>
               </div>
-              <div class="citation-text">"${c.text}"</div>
+              <div class="citation-text">"${escapeHtml(c.text)}"</div>
               <div class="citation-footer">
-                <span>Sentiment: <strong>${c.sentiment || 'Neutral'}</strong></span>
+                <span>Sentiment: <strong>${escapeHtml(c.sentiment || 'Neutral')}</strong></span>
                 <span>Cos Similarity: <strong>${(c.similarity_pct / 100).toFixed(2)}</strong></span>
               </div>
             </div>

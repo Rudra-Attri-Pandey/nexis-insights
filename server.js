@@ -6,17 +6,32 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const dns = require('dns').promises;
 const db = require('./db');
 
 dotenv.config();
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: (process.env.CORS_ORIGINS || 'http://localhost:3005').split(',') }));
 app.use(express.json());
 
-app.use(express.static(__dirname));
+// SECURITY: index.html/app.js/styles.css live at the project root, so there is
+// no separate public/ dir to isolate. Block sensitive files before serving
+// anything, and never serve dotfiles (which covers .env, .git, etc.).
+app.use((req, res, next) => {
+  if (/(\.env$|\.db$|\.db-journal$|\.log$|\.git|server\.js$|db\.js$|package.*\.json$|vercel\.json$|render\.yaml$|dockerfile$|docker-compose\.yml$|\.npmrc$)/i.test(req.path)) {
+    return res.status(404).send('Not found');
+  }
+  next();
+});
 
-const JWT_SECRET = process.env.JWT_SECRET || 'nexis_insights_jwt_secret_2026';
+app.use(express.static(__dirname, { dotfiles: 'deny', index: 'index.html' }));
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('[Security] FATAL: JWT_SECRET environment variable must be set. Refusing to start.');
+  process.exit(1);
+}
 
 app.use(async (req, res, next) => {
   try {
@@ -50,10 +65,20 @@ function requireAuth(req, res, next) {
   });
 }
 
-const omniRouteClient = new OpenAI({
-  baseURL: process.env.OMNIROUTE_GATEWAY_URL || 'https://integrate.api.nvidia.com/v1',
-  apiKey: process.env.OMNIROUTE_API_KEY || 'dummy_nim_key'
-});
+// The NIM/OmniRoute key is optional: when absent, AI routes return 503
+// instead of calling the gateway with a dummy key.
+const AI_ENABLED = Boolean(process.env.OMNIROUTE_API_KEY);
+if (!AI_ENABLED) {
+  console.warn('[Security] WARNING: OMNIROUTE_API_KEY is not set. AI routes (/api/analyze, /api/quickcart) will return 503.');
+}
+
+let omniRouteClient = null;
+if (AI_ENABLED) {
+  omniRouteClient = new OpenAI({
+    baseURL: process.env.OMNIROUTE_GATEWAY_URL || 'https://integrate.api.nvidia.com/v1',
+    apiKey: process.env.OMNIROUTE_API_KEY
+  });
+}
 
 const SYSTEM_PROMPT = `
 You are an expert product manager and universal real-world price intelligence AI.
@@ -326,10 +351,66 @@ app.delete('/api/history/:id', requireAuth, (req, res) => {
   }
 });
 
+// SECURITY: SSRF guard for the URL-fetch path in /api/analyze.
+// Only http/https URLs whose hostnames resolve to public IPs are fetched.
+function isPrivateIP(ip) {
+  if (!ip) return true;
+  const lower = String(ip).toLowerCase();
+  if (lower === '::1' || lower === '::' || lower === '0.0.0.0') return true;
+  if (lower.startsWith('fe80:')) return true; // IPv6 link-local
+  if (lower.startsWith('::ffff:')) return isPrivateIP(lower.slice('::ffff:'.length)); // IPv4-mapped
+  const v4 = lower.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const a = Number(v4[1]), b = Number(v4[2]);
+    if (a === 10) return true; // 10.0.0.0/8
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+    if (a === 127) return true; // 127.0.0.0/8
+    if (a === 0) return true; // 0.0.0.0/8
+    return false;
+  }
+  return false;
+}
+
+async function assertPublicUrl(rawUrl) {
+  let u;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    const err = new Error('Invalid URL');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    const err = new Error('Only http(s) URLs are allowed');
+    err.statusCode = 400;
+    throw err;
+  }
+  let address;
+  try {
+    ({ address } = await dns.lookup(u.hostname));
+  } catch {
+    const err = new Error('Could not resolve URL hostname');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (isPrivateIP(address)) {
+    const err = new Error('URL resolves to a private/internal address and is not allowed');
+    err.statusCode = 400;
+    throw err;
+  }
+}
+
 // ANALYSIS ROUTE WITH UNIVERSAL MULTI-CATEGORY PRICE INTELLIGENCE
 app.post('/api/analyze', authenticateToken, async (req, res) => {
+  if (!AI_ENABLED) {
+    return res.status(503).json({ error: 'AI service is not configured. Set OMNIROUTE_API_KEY.' });
+  }
+
   let { text } = req.body;
   if (!text) return res.status(400).json({ error: 'Text or URL is required' });
+  if (typeof text !== 'string') return res.status(400).json({ error: 'Text must be a string' });
+  if (text.length > 20000) return res.status(400).json({ error: 'Text exceeds maximum length of 20000 characters' });
 
   let analysisContent = text;
   let extractedMeta = null;
@@ -342,10 +423,11 @@ app.post('/api/analyze', authenticateToken, async (req, res) => {
     console.log(`[Scraper] URLs detected in text: ${urls.join(', ')}`);
     let scrapedData = [];
 
-    for (let rawUrl of urls) {
+    for (let rawUrl of urls.slice(0, 5)) {
       let fetchUrl = rawUrl.startsWith('www.') ? 'https://' + rawUrl : rawUrl;
 
       try {
+        await assertPublicUrl(fetchUrl); // SSRF guard: http(s) + public IP only
         console.log(`[Scraper] Fetching: ${fetchUrl}`);
         const response = await axios.get(fetchUrl, {
           headers: {
@@ -353,7 +435,9 @@ app.post('/api/analyze', authenticateToken, async (req, res) => {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9'
           },
-          timeout: 12000
+          timeout: 8000,
+          maxContentLength: 2 * 1024 * 1024,
+          maxBodyLength: 2 * 1024 * 1024
         });
 
         const $ = cheerio.load(response.data);
@@ -469,8 +553,13 @@ app.post('/api/analyze', authenticateToken, async (req, res) => {
 
 // QUICK-COMMERCE CART INTELLIGENCE ROUTE (GLOBAL & INDIAN)
 app.post('/api/quickcart', authenticateToken, async (req, res) => {
+  if (!AI_ENABLED) {
+    return res.status(503).json({ error: 'AI service is not configured. Set OMNIROUTE_API_KEY.' });
+  }
+
   const { items, region, bankCard, priority } = req.body;
   if (!items || !items.trim()) return res.status(400).json({ error: 'Grocery item list is required' });
+  if (items.length > 8000) return res.status(400).json({ error: 'Grocery item list exceeds maximum length of 8000 characters' });
 
   let finalData;
 
@@ -724,7 +813,7 @@ app.post('/api/rag/query', authenticateToken, async (req, res) => {
 
     const apiKey = process.env.NVIDIA_API_KEY || process.env.OMNIROUTE_API_KEY || process.env.GEMINI_API_KEY;
 
-    if (apiKey && apiKey !== 'dummy_nim_key') {
+    if (omniRouteClient && apiKey) {
       try {
         const ragPrompt = `You are Nexis Insights RAG AI. Answer the user question based STRICTLY on the retrieved customer feedback context below. Include citations like [Source #1], [Source #2] wherever applicable. If the context does not contain relevant info, summarize what was found honestly.
         

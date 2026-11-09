@@ -278,14 +278,14 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Name, email, and password are required' });
     }
 
-    const existingUser = db.findUserByEmail(email);
+    const existingUser = await db.findUserByEmail(email);
     if (existingUser) {
       return res.status(400).json({ error: 'User with this email already exists' });
     }
 
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
-    const user = db.createUser(name, email, passwordHash);
+    const user = await db.createUser(name, email, passwordHash);
 
     const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
 
@@ -303,7 +303,7 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const user = db.findUserByEmail(email);
+    const user = await db.findUserByEmail(email);
     if (!user) {
       return res.status(400).json({ error: 'Invalid email or password' });
     }
@@ -322,17 +322,22 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.get('/api/auth/me', requireAuth, (req, res) => {
-  const user = db.findUserById(req.user.id);
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json({ user });
+app.get('/api/auth/me', requireAuth, async (req, res) => {
+  try {
+    const user = await db.findUserById(req.user.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ user });
+  } catch (err) {
+    console.error('Auth me error:', err);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
 });
 
 // HISTORY ROUTES
-app.get('/api/history', authenticateToken, (req, res) => {
+app.get('/api/history', authenticateToken, async (req, res) => {
   try {
     const userId = req.user ? req.user.id : null;
-    const history = db.getUserHistory(userId);
+    const history = await db.getUserHistory(userId);
     res.json({ history });
   } catch (err) {
     console.error('History fetch error:', err);
@@ -340,10 +345,10 @@ app.get('/api/history', authenticateToken, (req, res) => {
   }
 });
 
-app.delete('/api/history/:id', requireAuth, (req, res) => {
+app.delete('/api/history/:id', requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    db.deleteAnalysis(id, req.user.id);
+    await db.deleteAnalysis(id, req.user.id);
     res.json({ success: true, message: 'Item deleted' });
   } catch (err) {
     console.error('Delete error:', err);
@@ -538,12 +543,12 @@ app.post('/api/analyze', authenticateToken, async (req, res) => {
     };
   }
 
-  // Save to SQLite Database
+  // Save to persistent store (Supabase Postgres when configured, else local sql.js)
   try {
     const userId = req.user ? req.user.id : null;
-    const savedRecord = db.saveAnalysis(userId, text, finalAnalysisData);
+    const savedRecord = await db.saveAnalysis(userId, text, finalAnalysisData);
     finalAnalysisData.id = savedRecord.id;
-    console.log(`[Database] Analysis saved to SQLite with ID: ${savedRecord.id}`);
+    console.log(`[Database] Analysis saved with ID: ${savedRecord.id}`);
   } catch (dbErr) {
     console.error('[Database] Failed to save analysis:', dbErr.message);
   }
@@ -759,7 +764,7 @@ app.post('/api/rag/index-feedback', authenticateToken, async (req, res) => {
       };
     });
 
-    const savedIds = db.saveVectorEntries(userId, itemsToSave);
+    const savedIds = await db.saveVectorEntries(userId, itemsToSave);
 
     res.json({
       success: true,
@@ -781,7 +786,7 @@ app.post('/api/rag/query', authenticateToken, async (req, res) => {
     }
 
     const userId = req.user ? req.user.id : 'anonymous';
-    const allVectors = db.getUserVectors(userId);
+    const allVectors = await db.getUserVectors(userId);
 
     if (allVectors.length === 0) {
       return res.json({
@@ -874,7 +879,7 @@ USER QUESTION:
 app.get('/api/rag/stats', authenticateToken, async (req, res) => {
   try {
     const userId = req.user ? req.user.id : 'anonymous';
-    const allVectors = db.getUserVectors(userId);
+    const allVectors = await db.getUserVectors(userId);
     res.json({
       success: true,
       totalIndexed: allVectors.length,
